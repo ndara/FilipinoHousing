@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 def relu(x):
     return max(0,x);
@@ -104,7 +105,7 @@ class Layer:
         """Update the weights based on the partial derivatives of the outputs of the nodes within this layer.
         
         Args:
-          - dldh: a vector containing the partial derivatives of each node (excluding the bias node)
+          - dldh_prod: a vector containing the partial derivatives of each node multiplied by the activation function's derivative (excluding the bias node)
         """
         
         dldw = self.inputs.T.dot(dldh_prod)
@@ -189,11 +190,25 @@ class NeuralNetwork:
         """Trains the network based on the input data against the truth given.
         
         Args:
-          - X: a matrix of shape [data points, features]
-          - Y: an array of length [data points]
+          - X: a matrix or dataframe of shape [data points, input features]
+          - Y: a matrix or dataframe of shape [data points, output features]
+          - eta: the learning rate
           - epochs: number of times to iterate over the entire dataset
           - batch_size: the number of data points to step through before updating the weights
         """
+        
+        if isinstance(X, pd.Series):
+            X = pd.DataFrame(X)
+        
+        if isinstance(X, pd.DataFrame):
+            X = X.astype(float).as_matrix()
+        
+        if isinstance(Y, pd.Series):
+            Y = pd.DataFrame(Y)
+        
+        if isinstance(Y, pd.DataFrame):
+            Y = Y.astype(float).as_matrix()
+        
         for epoch in range(epochs):
             for i in range(0, X.shape[0], batch_size):
                 end_point = min(i + batch_size, X.shape[0])
