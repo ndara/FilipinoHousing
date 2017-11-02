@@ -76,7 +76,7 @@ class Layer:
         self.bias = bias
         self.input_size = input_size
         self.output_size = output_size+1 if bias else output_size
-        self.weights = np.random.randn(self.input_size, output_size) # NOT self.output_size
+        self.weights = np.random.normal(loc = 0.0, scale = (2 / input_size)**0.5, size = (self.input_size, output_size)) # NOT self.output_size
         self.inputs = None
     
     def forward_prop(self, inputs):
@@ -164,6 +164,9 @@ class NeuralNetwork:
         self.dims.append(layer.output_size)
                 
         return self
+    
+    def count_weights(self):
+        return sum(layer.input_size * layer.output_size for layer in self.layers)
         
     def predict(self, x):
         """Predicts output for the given input x.
@@ -186,7 +189,7 @@ class NeuralNetwork:
         
         return output
         
-    def fit(self, X, Y, eta, epochs, batch_size = 1):
+    def fit(self, X, Y, eta, epochs, batch_size = 1, verbose = True):
         """Trains the network based on the input data against the truth given.
         
         Args:
@@ -210,9 +213,21 @@ class NeuralNetwork:
             Y = Y.astype(float).as_matrix()
         
         for epoch in range(epochs):
+            if verbose:
+                predicted_y = self.predict(X)
+                costs = self.cost(Y, predicted_y)
+                print("Epoch", epoch, "- Training cost:", costs)
+                
             for i in range(0, X.shape[0], batch_size):
                 end_point = min(i + batch_size, X.shape[0])
                 self.update(X[i:end_point,:], Y[i:end_point], eta)
+                
+        if verbose:
+            predicted_y = self.predict(X)
+            costs = self.cost(Y, predicted_y)
+            print("Epoch", epochs, "- Training cost:", costs)
+
+            
         
     def update(self, x, y, eta):
         """Updates neural network weights based on new training data.
