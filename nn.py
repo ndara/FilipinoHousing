@@ -77,14 +77,16 @@ cost_derivatives = {
 
 class Layer:
   
-    def __init__(self, input_size, output_size, activation_function, activation_derivative = None, bias = True, last_layer_bias = True):
+    def __init__(self, input_size, output_size, activation_function, activation_derivative = None, bias = True, last_layer_bias = True, dropout = 1):
         """Initializes a layer to be densely connected into a neural network.
         
         Args:
           - size: the number of neurons in the layer (does not include the bias if there is one)
           - activation_function: the activation function to be applied to the weighted sum. Must pass either a string or a np.vectorized function.
           - activation_derivative: if passed a non-string to activation_function, this must be a np.vectorized function as well
-          - bias: determines is a bias node will be present in this layer or not        
+          - bias: determines is a bias node will be present in this layer or not     
+          - last_layer_bias: determines if the layer that this layer connects to had a bias present or not
+          - dropout: a proportion from 0 to 1 inclusive that determines how likely it is for a single node to be dropped out
         """
         if isinstance(activation_function, str):
             self.activation_function = activation_functions[activation_function]
@@ -102,11 +104,20 @@ class Layer:
         self.weights = np.random.normal(loc = 0.0, scale = (2 / input_size)**0.5, size = (self.input_size, output_size)) # NOT self.output_size
         self.inputs = None
         self.last_layer_bias = last_layer_bias
+        self.dropout = dropout
     
-    def forward_prop(self, inputs):
+    def forward_prop(self, inputs, for_train = False):
         self.inputs = inputs
-        return self.activate(inputs.dot(self.weights))
+
+        activated_values = self.activate(inputs.dot(self.weights))
         
+        if for_train and self.dropout < 1:
+            activated_values *= (np.random.rand(*activated_values.shape) > self.dropout) / self.dropout
+
+        self.past = activated_values
+
+        return activated_values 
+                
     def activate(self, weighted_sums):
         """Passes a matrix of weighted sums through an activation function. Adds a bias column to the end if wanted.
         
@@ -121,9 +132,7 @@ class Layer:
         if self.bias:
             bias_column = np.ones((activated_values.shape[0],1))
             activated_values = np.append(activated_values, bias_column, axis = 1)
-        
-        self.past = activated_values
-        
+                
         return activated_values
     
     def update_weights(self, dldh_prod, eta, l2_value):
@@ -177,7 +186,7 @@ class NeuralNetwork:
         self.cost_derivative = cost_derivatives[cost]
         self.input_bias = input_bias
         
-    def add_layer(self, nodes, activation_function = "relu", bias = True):
+    def add_layer(self, nodes, activation_function = "relu", bias = True, dropout = 1):
         """Adds a layer to the network. Assumes it is to be fully connected.
         
         Args:
@@ -192,7 +201,8 @@ class NeuralNetwork:
             last_layer_bias = self.layers[-1].bias
         else:
             last_layer_bias = self.input_bias
-        layer = Layer(self.dims[-1], nodes, activation_function, bias = bias, last_layer_bias = last_layer_bias)
+            
+        layer = Layer(self.dims[-1], nodes, activation_function, bias = bias, last_layer_bias = last_layer_bias, dropout = dropout)
         self.layers.append(layer)
         self.dims.append(layer.output_size)
                 
@@ -201,7 +211,7 @@ class NeuralNetwork:
     def count_weights(self):
         return sum(layer.input_size * layer.output_size for layer in self.layers)
         
-    def predict(self, x):
+    def predict(self, x, for_train = False):
         """Predicts output for the given input x.
         
         Args:
@@ -222,6 +232,22 @@ class NeuralNetwork:
         
         return output
         
+    def process_input(self, z):
+        if z is None:
+            return z
+            
+        if isinstance(z, pd.Series):
+            z = pd.DataFrame(z)
+        
+        if isinstance(z, pd.DataFrame):
+            z = z.astype(float).as_matrix()
+            
+        if len(z.shape) <= 1:
+            z = z.reshape((z.shape[0], 1))
+        
+        return z
+
+        
     def fit(self, X, Y, test_X = None, test_Y = None, eta = 0.001, epochs = 10, batch_size = 32, verbose = True, l2_value = 0):
         """Trains the network based on the input data against the truth given.
         
@@ -233,24 +259,11 @@ class NeuralNetwork:
           - batch_size: the number of data points to step through before updating the weights
         """
         
-        if isinstance(X, pd.Series):
-            X = pd.DataFrame(X)
+        X = self.process_input(X)
+        Y = self.process_input(Y)
+        test_X = self.process_input(test_X)
+        test_Y = self.process_input(test_Y)
         
-        if isinstance(X, pd.DataFrame):
-            X = X.astype(float).as_matrix()
-            
-        if len(X.shape) <= 1:
-            X = X.reshape((X.shape[0], 1))
-        
-        if isinstance(Y, pd.Series):
-            Y = pd.DataFrame(Y)
-        
-        if isinstance(Y, pd.DataFrame):
-            Y = Y.astype(float).as_matrix()
-                
-        if len(Y.shape) <= 1:
-            Y = Y.reshape((Y.shape[0], 1))  
-              
         print("Inputs have been converted. Training starting now.")
                 
         for epoch in range(epochs):
@@ -290,7 +303,7 @@ class NeuralNetwork:
           - eta: a float representing the learning rate
           - n: an integer representing the total amount of training observations in the entire dataset
         """
-        prediction = self.predict(x)
+        prediction = self.predict(x, for_train = True)
         dldh = self.cost_derivative(y, prediction)
         for i, layer in enumerate(self.layers[::-1]):
             dldh = layer.back_prop(dldh, eta / x.shape[0], l2_value / n)
