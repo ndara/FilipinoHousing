@@ -77,7 +77,7 @@ cost_derivatives = {
 
 class Layer:
   
-    def __init__(self, input_size, output_size, activation_function, activation_derivative = None, bias = True):
+    def __init__(self, input_size, output_size, activation_function, activation_derivative = None, bias = True, last_layer_bias = True):
         """Initializes a layer to be densely connected into a neural network.
         
         Args:
@@ -101,6 +101,7 @@ class Layer:
         # These are the weights that connect the inputs to this layer's output neurons
         self.weights = np.random.normal(loc = 0.0, scale = (2 / input_size)**0.5, size = (self.input_size, output_size)) # NOT self.output_size
         self.inputs = None
+        self.last_layer_bias = last_layer_bias
     
     def forward_prop(self, inputs):
         self.inputs = inputs
@@ -125,7 +126,7 @@ class Layer:
         
         return activated_values
     
-    def update_weights(self, dldh_prod, eta):
+    def update_weights(self, dldh_prod, eta, l2_value):
         """Update the weights based on the partial derivatives of the outputs of the nodes within this layer.
         
         Args:
@@ -133,10 +134,13 @@ class Layer:
         """
         
         dldw = self.inputs.T.dot(dldh_prod)
-        self.weights -= eta * dldw
-        
+        if self.last_layer_bias:
+            self.weights[:-1, :] = (1 - eta * l2_value) * self.weights[:-1, :] - eta * dldw[:-1, :]
+            self.weights[-1,:] = self.weights[-1,:] - eta * dldw[-1,:] # Biases are not affected by regularization
+        else:
+            self.weights = (1 - eta * l2_value) * self.weights - eta * dldw
     
-    def back_prop(self, dldh, eta):
+    def back_prop(self, dldh, eta, l2_value):
         """Calculate the partial derivatives of the prior layer and signal to update this layer's weights.
         
         Args:
@@ -155,7 +159,7 @@ class Layer:
         
         prior_dldh = dldh_prod.dot(self.weights.T)
         
-        self.update_weights(dldh_prod, eta)
+        self.update_weights(dldh_prod, eta, l2_value)
         
         return prior_dldh
     
@@ -184,7 +188,11 @@ class NeuralNetwork:
         Returns:
           A reference to this object to chain method calls.
         """
-        layer = Layer(self.dims[-1], nodes, activation_function, bias = bias)
+        if len(self.layers) > 0:
+            last_layer_bias = self.layers[-1].bias
+        else:
+            last_layer_bias = self.input_bias
+        layer = Layer(self.dims[-1], nodes, activation_function, bias = bias, last_layer_bias = last_layer_bias)
         self.layers.append(layer)
         self.dims.append(layer.output_size)
                 
@@ -214,7 +222,7 @@ class NeuralNetwork:
         
         return output
         
-    def fit(self, X, Y, eta, epochs, batch_size = 32, verbose = True):
+    def fit(self, X, Y, test_X = None, test_Y = None, eta = 0.001, epochs = 10, batch_size = 32, verbose = True, l2_value = 0):
         """Trains the network based on the input data against the truth given.
         
         Args:
@@ -248,31 +256,44 @@ class NeuralNetwork:
         for epoch in range(epochs):
             if verbose:
                 predicted_y = self.predict(X)
-                costs = self.cost(Y, predicted_y).mean()
-                print("Epoch", epoch, "- Training cost:", costs)
-                
+                train_costs = self.cost(Y, predicted_y).mean()
+                if test_X is None or test_Y is None:
+                    print("Epoch", epoch, "\tTraining cost:", train_costs)
+                else:
+                    predicted_y = self.predict(test_X)
+                    test_costs = self.cost(test_Y, predicted_y).mean()
+                    print("Epoch", epoch, "\tTraining cost:", train_costs, "\tTesting cost:", test_costs)
+                    
             for i in range(0, X.shape[0], batch_size):
                 printProgressBar(i, X.shape[0], prefix = "Epoch " + str(epoch))
                 end_point = min(i + batch_size, X.shape[0])
-                self.update(X[i:end_point,:], Y[i:end_point], eta)
+                self.update(X[i:end_point,:], Y[i:end_point], eta, X.shape[0], l2_value)
             printProgressBar(X.shape[0], X.shape[0], prefix = "Epoch " + str(epoch))
             
         if verbose:
             predicted_y = self.predict(X)
-            costs = self.cost(Y, predicted_y).mean()
-            print("Epoch", epochs, "- Training cost:", costs)
-
-            
+            train_costs = self.cost(Y, predicted_y).mean()
+            if test_X is None or test_Y is None:
+                print("Epoch", epoch, "\tTraining cost:", train_costs)
+            else:
+                predicted_y = self.predict(test_X)
+                test_costs = self.cost(test_Y, predicted_y).mean()
+                print("Epoch", epoch, "\tTraining cost:", train_costs, "\tTesting cost:", test_costs)
+       
         
-    def update(self, x, y, eta):
+    def update(self, x, y, eta, n, l2_value):
         """Updates neural network weights based on new training data.
         
         Args:
           - x: a matrix of shape [observations, input_features]
           - y: a matrix of shape [observations, output_features]
+          - eta: a float representing the learning rate
+          - n: an integer representing the total amount of training observations in the entire dataset
         """
         prediction = self.predict(x)
         dldh = self.cost_derivative(y, prediction)
         for i, layer in enumerate(self.layers[::-1]):
-            dldh = layer.back_prop(dldh, eta)
+            dldh = layer.back_prop(dldh, eta / x.shape[0], l2_value / n)
+            # divide eta by the batch_size so as to account for multiple updates at the same time
+            # divide lambda by the total samples for L2 regularization
             
